@@ -1,17 +1,43 @@
+// src/app.js
 import express from "express";
-import metaRoutes from "./modules/meta/routes/meta.routes.js";
-import adsRoutes from "./modules/meta/routes/adsRoutes.js";
-import userRoutes from "./modules/meta/routes/userRoutes.js";
+import cors from "cors";
+
+// Importa apenas o roteador central do módulo Meta
+import metaModuleRoutes from "./modules/meta/routes/index.js"; 
 
 const app = express();
 
-// Middleware deve vir ANTES das rotas
+// --- MIDDLEWARES GLOBAIS ---
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:5173'],
+  credentials: true 
+}));
 app.use(express.json());
 
-app.get("/", (req, res) => { res.send("API rodando 🚀"); });
+// --- HEALTH CHECK ---
+app.get("/", (req, res) => { 
+  res.status(200).json({ status: "OK", message: "API rodando 🚀" }); 
+});
 
-// Rotas
-app.use("/", metaRoutes);
-app.use("/ads", adsRoutes);
-app.use("/user", userRoutes);
+// --- ROTAS DA API ---
+// Aqui está a mágica! Qualquer rota dentro desse módulo terá o prefixo /api/meta
+app.use("/api/meta", metaModuleRoutes);
+
+// No futuro, você fará apenas isso para novos serviços:
+// import googleRoutes from './modules/google/routes/index.js';
+// app.use("/api/google", googleRoutes);
+
+// --- TRATAMENTO DE ERROS ---
+app.use((req, res, next) => {
+  res.status(404).json({ success: false, message: "Rota não encontrada na API." });
+});
+
+app.use((err, req, res, next) => {
+  console.error("🔥 [Erro Global]:", err.message);
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || "Ocorreu um erro interno no servidor.",
+  });
+});
+
 export default app;
