@@ -3,8 +3,8 @@ import { handleMetaCallback, redirectToMetaLogin, checkAuthStatus } from "../con
 
 const router = express.Router();
 
-router.get("/auth/status", checkAuthStatus);
-router.get("/auth/login", redirectToMetaLogin);
-router.get("/auth/callback", handleMetaCallback);
+router.get("/status", checkAuthStatus);
+router.get("/login", redirectToMetaLogin);
+router.get("/callback", handleMetaCallback);
 
 export default router;

@@ -1,7 +1,17 @@
 {
+  "clients": [
+    {
+      "id": 1,
+      "name": "Minha Agência (Default)",
+      "created_at": "2026-03-24T17:27:33.884Z",
+      "updated_at": "2026-03-24T17:27:33.884Z"
+    }
+  ],
   "users": [
     {
       "id": 1,
+      "client_id": 1,
+      "role": "admin",
       "name": "Joao Vitor Andrade De Melo",
       "email": "user_1240057564909915@meta.local",
       "created_at": "2026-03-23T20:26:21.693Z",
@@ -11,7 +21,7 @@
   "integrations": [
     {
       "id": 1,
-      "user_id": 1,
+      "client_id": 1,
       "provider": "meta",
       "meta_user_id": "1240057564909915",
       "access_token": "EAAXMcAS4M9QBRO5e7DNGTBOWNvfs6gMbXmbCfjk5ZBqRr17MmezrYtDZBIFrPWgNjaLgAo0ygFJkjrqbZBdMlzZBpk4b1oGUNwogcC6Jh96L9VlEg26Nx8KtFNftkN4DW75sIHW5Rwm9m99v3ZCKCumXFxNyYeUEzbOve5jEHNiolHCYCQIcWr0twKDEd",

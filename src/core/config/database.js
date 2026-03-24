@@ -1,3 +1,4 @@
+// src/core/config/database.js
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -9,15 +10,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dbPath = path.join(__dirname, "../../../db/data.json");
 
-// Ensure db directory exists
-const dbDir = path.dirname(dbPath);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+if (!fs.existsSync(path.dirname(dbPath))) {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 }
 
-// Initialize data file if it doesn't exist
+// Inicializa com a nova estrutura Multi-Tenant
 if (!fs.existsSync(dbPath)) {
-  fs.writeFileSync(dbPath, JSON.stringify({ users: [], integrations: [] }, null, 2));
+  fs.writeFileSync(dbPath, JSON.stringify({ clients: [], users: [], integrations: [] }, null, 2));
 }
 
 let data = JSON.parse(fs.readFileSync(dbPath, "utf8"));
@@ -28,37 +27,20 @@ const saveData = () => {
 
 export const query = (text, params = []) => {
   const start = Date.now();
-
-  // Simple simulation of SQL queries using the data object
   let result = [];
 
-  if (text.includes("SELECT u.id AS user_id, u.name, u.email, i.id AS integration_id FROM users u JOIN integrations i ON i.user_id = u.id WHERE i.provider = ? AND i.meta_user_id = ? LIMIT 1")) {
+  if (text.includes("SELECT id AS integration_id, client_id FROM integrations WHERE provider = ? AND meta_user_id = ?")) {
     const [provider, metaUserId] = params;
     const integration = data.integrations.find(i => i.provider === provider && i.meta_user_id === metaUserId);
     if (integration) {
-      const user = data.users.find(u => u.id === integration.user_id);
-      if (user) {
-        result = [{ user_id: user.id, name: user.name, email: user.email, integration_id: integration.id }];
-      }
+      result = [{ integration_id: integration.id, client_id: integration.client_id }];
     }
-  } else if (text.includes("SELECT i.*, u.name, u.email") && text.includes("FROM integrations i") && text.includes("WHERE i.expires_at >")) {
-    // Query para buscar integração válida não expirada
-    const [expiresAtComparison] = params;
-    
-    // Filtrar integrações que não expiraram e que têm usuário associado
+  } else if (text.includes("SELECT * FROM integrations WHERE client_id = ? AND expires_at > ?")) {
+    const [clientId, expiresAtComparison] = params;
     const validIntegrations = data.integrations
-      .filter(i => {
-        const user = data.users.find(u => u.id === i.user_id);
-        return user && i.expires_at > expiresAtComparison;
-      })
-      .map(i => ({
-        ...i,
-        name: data.users.find(u => u.id === i.user_id)?.name,
-        email: data.users.find(u => u.id === i.user_id)?.email
-      }))
+      .filter(i => i.client_id === clientId && i.expires_at > expiresAtComparison)
       .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
       .slice(0, 1);
-    
     result = validIntegrations;
   } else if (text.includes("SELECT * FROM integrations WHERE id = ?")) {
     const [id] = params;
@@ -74,25 +56,12 @@ export const query = (text, params = []) => {
   return { rows: result, rowCount: result.length };
 };
 
-export const insertUser = (name, email) => {
-  const id = data.users.length > 0 ? Math.max(...data.users.map(u => u.id)) + 1 : 1;
-  const user = {
-    id,
-    name,
-    email,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
-  data.users.push(user);
-  saveData();
-  return user;
-};
-
-export const insertIntegration = (userId, provider, metaUserId, accessToken, expiresAt) => {
+// Agora a integração recebe o clientId
+export const insertIntegration = (clientId, provider, metaUserId, accessToken, expiresAt) => {
   const id = data.integrations.length > 0 ? Math.max(...data.integrations.map(i => i.id)) + 1 : 1;
   const integration = {
     id,
-    user_id: userId,
+    client_id: clientId,
     provider,
     meta_user_id: metaUserId,
     access_token: accessToken,
@@ -105,15 +74,6 @@ export const insertIntegration = (userId, provider, metaUserId, accessToken, exp
   return integration;
 };
 
-export const updateUser = (id, name) => {
-  const user = data.users.find(u => u.id === id);
-  if (user) {
-    user.name = name;
-    user.updated_at = new Date().toISOString();
-    saveData();
-  }
-};
-
 export const updateIntegration = (id, accessToken, expiresAt) => {
   const integration = data.integrations.find(i => i.id === id);
   if (integration) {
@@ -124,11 +84,20 @@ export const updateIntegration = (id, accessToken, expiresAt) => {
   }
 };
 
+// Mantemos o updateUser caso precise usar no futuro, mas o Auth da Meta não o usa mais
+export const updateUser = (id, name) => {
+  const user = data.users.find(u => u.id === id);
+  if (user) {
+    user.name = name;
+    user.updated_at = new Date().toISOString();
+    saveData();
+  }
+};
+
 const connectDatabase = async () => {
   try {
-    // Test by reading the file
     JSON.parse(fs.readFileSync(dbPath, "utf8"));
-    console.log("✅ Conectado ao armazenamento JSON");
+    console.log("✅ Conectado ao armazenamento JSON (Multi-Tenant)");
   } catch (error) {
     console.error("❌ Erro ao conectar ao armazenamento JSON:", error.message);
     process.exit(1);

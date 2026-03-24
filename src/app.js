@@ -1,9 +1,8 @@
 // src/app.js
 import express from "express";
 import cors from "cors";
-
-// Importa apenas o roteador central do módulo Meta
 import metaModuleRoutes from "./modules/meta/routes/index.js"; 
+import { successResponse, errorResponse } from "./core/utils/response.util.js"; // <-- NOVO IMPORT
 
 const app = express();
 
@@ -16,28 +15,23 @@ app.use(express.json());
 
 // --- HEALTH CHECK ---
 app.get("/", (req, res) => { 
-  res.status(200).json({ status: "OK", message: "API rodando 🚀" }); 
+  // <-- USANDO O PADRÃO DE SUCESSO
+  return successResponse(res, null, "API rodando 🚀", 200); 
 });
 
 // --- ROTAS DA API ---
-// Aqui está a mágica! Qualquer rota dentro desse módulo terá o prefixo /api/meta
 app.use("/api/meta", metaModuleRoutes);
-
-// No futuro, você fará apenas isso para novos serviços:
-// import googleRoutes from './modules/google/routes/index.js';
-// app.use("/api/google", googleRoutes);
 
 // --- TRATAMENTO DE ERROS ---
 app.use((req, res, next) => {
-  res.status(404).json({ success: false, message: "Rota não encontrada na API." });
+  // <-- USANDO O PADRÃO DE ERRO PARA 404
+  return errorResponse(res, "A rota solicitada não foi encontrada na API.", 404);
 });
 
 app.use((err, req, res, next) => {
   console.error("🔥 [Erro Global]:", err.message);
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || "Ocorreu um erro interno no servidor.",
-  });
+  // <-- USANDO O PADRÃO DE ERRO GLOBAL (500)
+  return errorResponse(res, err.message || "Ocorreu um erro interno no servidor.", err.status || 500);
 });
 
 export default app;

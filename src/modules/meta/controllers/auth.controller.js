@@ -1,4 +1,5 @@
 import axios from "axios";
+import { successResponse, errorResponse } from "../../../core/utils/response.util.js";
 import {
   exchangeCodeForToken,
   exchangeForLongLivedToken,
@@ -12,44 +13,27 @@ export const checkAuthStatus = async (req, res) => {
     const token = await getCurrentValidToken();
 
     if (!token) {
-      return res.json({
+      // Devolvemos um JSON de sucesso (200), mas avisando que a autenticação é false
+      return successResponse(res, {
         authenticated: false,
-        message: "Nenhuma integração válida encontrada",
-        action: {
-          url: "/auth/login",
-          method: "GET",
-          description: "Iniciar fluxo de autenticação OAuth com Meta"
-        }
-      });
+        action: { url: "/api/meta/auth/login", method: "GET", description: "Iniciar fluxo de autenticação" }
+      }, "Nenhuma integração válida encontrada");
     }
 
-    // Valida se o token ainda funciona
     const userData = await validateToken(token);
 
     if (!userData) {
-      return res.json({
+      return successResponse(res, {
         authenticated: false,
-        message: "Token expirado ou inválido",
-        action: {
-          url: "/auth/login",
-          method: "GET",
-          description: "Renovar autenticação com Meta"
-        }
-      });
+        action: { url: "/api/meta/auth/login", method: "GET", description: "Renovar autenticação" }
+      }, "Token expirado ou inválido");
     }
 
-    res.json({
-      authenticated: true,
-      user: userData,
-      message: "Usuário autenticado com Meta"
-    });
+    return successResponse(res, { authenticated: true, user: userData }, "Usuário autenticado com Meta");
 
   } catch (error) {
-    console.error('Erro ao verificar status de autenticação:', error);
-    res.status(500).json({
-      authenticated: false,
-      error: "Erro interno ao verificar autenticação"
-    });
+    console.error('🔥 Erro ao verificar status de autenticação:', error.message);
+    return errorResponse(res, "Erro interno ao verificar autenticação", 500);
   }
 };
 
@@ -58,25 +42,17 @@ export const handleMetaCallback = async (req, res) => {
     const { code } = req.query;
 
     if (!code) {
-      return res.status(400).json({ error: "Parâmetro 'code' obrigatório na URL de callback" });
+      return errorResponse(res, "Parâmetro 'code' obrigatório na URL de callback", 400);
     }
 
     const shortToken = await exchangeCodeForToken(code);
-    const longToken = await exchangeForLongLivedToken(
-      shortToken.access_token
-    );
-
+    const longToken = await exchangeForLongLivedToken(shortToken.access_token);
     const accessToken = longToken.access_token;
 
-    const { data: metaUser } = await axios.get(
-      "https://graph.facebook.com/me",
-      {
-        params: {
-          access_token: accessToken,
-          fields: "id,name",
-        },
-      }
-    );
+    // Observação: O ideal na Etapa 5 será mover esta chamada do Axios para o auth.service.js
+    const { data: metaUser } = await axios.get("https://graph.facebook.com/me", {
+      params: { access_token: accessToken, fields: "id,name" },
+    });
 
     const expiresAt = new Date(Date.now() + longToken.expires_in * 1000);
 
@@ -87,25 +63,18 @@ export const handleMetaCallback = async (req, res) => {
       expiresAt,
     });
 
-    res.json({
-      message: "Meta conectado com sucesso 🚀",
-      user,
-    });
+    return successResponse(res, user, "Meta conectado com sucesso 🚀");
   } catch (error) {
     const statusCode = error.response?.status || 500;
     const errorMessage = error.response?.data?.error_description || error.message || "Erro desconhecido na autenticação Meta";
     
-    console.error(`[Auth Error - ${statusCode}]:`, errorMessage);
-    
-    res.status(statusCode === 400 ? 400 : 500).json({ 
-      error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    console.error(`🔥 [Auth Error]:`, errorMessage);
+    return errorResponse(res, errorMessage, statusCode);
   }
 };
 
 export const redirectToMetaLogin = (req, res) => {
+  // Redirecionamentos (302) não retornam JSON, logo, mantemos a função nativa do Express
   const authUrl = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.META_APP_ID}&redirect_uri=${encodeURIComponent(process.env.META_REDIRECT_URI)}&scope=read_insights,pages_show_list,pages_manage_ads`;
-
   res.redirect(authUrl);
 };

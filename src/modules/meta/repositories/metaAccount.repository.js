@@ -1,62 +1,49 @@
-import { query, insertUser, insertIntegration, updateUser, updateIntegration } from "../../../core/config/database.js";
+// src/modules/meta/repositories/metaAccount.repository.js
+import { query, insertIntegration, updateIntegration } from "../../../core/config/database.js";
 
 export const upsertMetaIntegration = async ({
   metaUserId,
-  name,
+  name, // Nome da página/conta da Meta, apenas para referência
   accessToken,
   expiresAt,
+  clientId = 1 // TODO (Etapa 5): Receber isto do Service (que recebe do req.user)
 }) => {
-  if (!metaUserId || !name || !accessToken) {
-    throw new Error("Parâmetros obrigatórios faltando: metaUserId, name, accessToken");
+  if (!metaUserId || !accessToken) {
+    throw new Error("Parâmetros obrigatórios faltando: metaUserId, accessToken");
   }
 
   if (expiresAt && isNaN(new Date(expiresAt).getTime())) {
     throw new Error("expiresAt deve ser um Date válido ou string válida");
   }
 
+  // Verifica se esta página da Meta já está integrada no sistema
   const findIntegration = query(
-    `SELECT u.id AS user_id, u.name, u.email, i.id AS integration_id FROM users u JOIN integrations i ON i.user_id = u.id WHERE i.provider = ? AND i.meta_user_id = ? LIMIT 1`,
+    `SELECT id AS integration_id, client_id FROM integrations WHERE provider = ? AND meta_user_id = ? LIMIT 1`,
     ["meta", metaUserId]
   );
 
+  // Se já existe, apenas renova o Token de Acesso
   if (findIntegration.rows.length > 0) {
-    const { user_id, integration_id } = findIntegration.rows[0];
-
-    updateUser(user_id, name);
+    const { integration_id } = findIntegration.rows[0];
+    
     updateIntegration(integration_id, accessToken, expiresAt);
-
+    
     const updatedIntegration = query(`SELECT * FROM integrations WHERE id = ?`, [integration_id]);
-
-    return {
-      id: user_id,
-      name,
-      integration: updatedIntegration.rows[0],
-    };
+    return updatedIntegration.rows[0];
   }
 
-  const userEmail = `user_${metaUserId}@meta.local`;
-
-  const newUser = insertUser(name, userEmail);
-  const newIntegration = insertIntegration(newUser.id, "meta", metaUserId, accessToken, expiresAt);
-
-  return {
-    ...newUser,
-    integration: newIntegration,
-  };
+  // Se não existe, cria uma nova integração associada à Empresa (Client)
+  const newIntegration = insertIntegration(clientId, "meta", metaUserId, accessToken, expiresAt);
+  return newIntegration;
 };
 
-export const getValidIntegration = async () => {
+export const getValidIntegration = async (clientId = 1) => {
   const now = new Date().toISOString();
 
-  // Buscar integrações que não expiraram
+  // Busca a integração ativa DESTA empresa específica
   const validIntegrations = query(
-    `SELECT i.*, u.name, u.email
-      FROM integrations i
-      JOIN users u ON u.id = i.user_id
-      WHERE i.expires_at > ?
-      ORDER BY i.updated_at DESC
-      LIMIT 1`,
-    [now]
+    `SELECT * FROM integrations WHERE client_id = ? AND expires_at > ? ORDER BY updated_at DESC LIMIT 1`,
+    [clientId, now]
   );
 
   if (validIntegrations.rows.length > 0) {
