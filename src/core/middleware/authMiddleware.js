@@ -1,45 +1,32 @@
-// src/core/middleware/authMiddleware.js
+import jwt from 'jsonwebtoken';
 import { errorResponse } from "../utils/response.util.js";
-import { getCurrentValidToken, validateToken } from "../../modules/meta/services/auth.service.js"; 
 
 export const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    let accessToken = null;
+    const token = authHeader && authHeader.split(' ')[1]; // Pega o "TOKEN" do "Bearer TOKEN"
 
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      accessToken = authHeader.substring(7);
+    if (!token) {
+      return errorResponse(res, "Acesso negado. Token não fornecido.", 401);
     }
 
-    if (!accessToken) {
-      // Busca a integração padrão (no futuro, isto será substituído por um JWT real do seu front-end)
-      accessToken = await getCurrentValidToken();
-    }
+    // Verifica e decodifica o Token
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+      if (err) {
+        return errorResponse(res, "Token inválido ou expirado.", 403);
+      }
 
-    if (!accessToken) {
-      return errorResponse(res, "Acesso negado. Token de autenticação não fornecido.", 401);
-    }
+      // Injeta os dados REAIS do usuário no pedido
+      req.user = {
+        id: decoded.id,
+        clientId: decoded.clientId,
+        role: decoded.role,
+        token: token // Opcional: manter o JWT original
+      };
 
-    const isValid = await validateToken(accessToken);
-    
-    if (!isValid) {
-      return errorResponse(res, "Sessão expirada ou token inválido. Por favor, inicie sessão novamente.", 401);
-    }
-
-    // --- 🚀 A MÁGICA DO MULTI-TENANT ACONTECE AQUI ---
-    // Numa app final, você leria um token JWT aqui e extrairia estes dados.
-    // Como estamos na fundação, vamos injetar o utilizador e a empresa que criámos no data.json!
-    req.user = { 
-      id: 1,                  // ID do João
-      clientId: 1,            // O ID da Agência/Empresa a que o João pertence!
-      role: "admin",          // Nível de acesso
-      token: accessToken      // O token da Meta para fazer as chamadas
-    };
-    
-    next();
+      next();
+    });
   } catch (error) {
-    console.error("🔥 [Auth Middleware Error]:", error.message);
-    const statusCode = error.statusCode || 401;
-    return errorResponse(res, error.message || "Erro na validação da autenticação.", statusCode);
+    return errorResponse(res, "Erro na autenticação", 401);
   }
 };
