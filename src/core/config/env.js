@@ -2,12 +2,14 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+export const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_aqui';
+export const PORT = process.env.PORT || 3000;
+
 const requiredEnvVars = [
   "PORT",
+  "JWT_SECRET",
   "META_APP_ID",
   "META_APP_SECRET",
-  "META_REDIRECT_URI",
-  "META_BASE_URL",
   "NODE_ENV"
 ];
 

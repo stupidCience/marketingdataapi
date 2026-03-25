@@ -21,3 +21,9 @@ export const errorResponse = (res, message = "Ocorreu um erro no servidor", stat
     errors
   });
 };
+
+// ✅ EXPORT DEFAULT: Mapeia os nomes longos para os nomes curtos que o middleware usa
+export default {
+  success: successResponse,
+  error: errorResponse
+};
