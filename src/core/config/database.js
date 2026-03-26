@@ -1,113 +1,126 @@
-// src/core/config/database.js
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import dotenv from "dotenv";
-
-dotenv.config();
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const dbPath = path.join(__dirname, "../../../db/data.json");
 
-if (!fs.existsSync(path.dirname(dbPath))) {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-}
+let dbInstance = null;
 
-if (!fs.existsSync(dbPath)) {
-  fs.writeFileSync(dbPath, JSON.stringify({ clients: [], users: [], integrations: [] }, null, 2));
-}
+export const initDB = async () => {
+  if (dbInstance) return dbInstance;
 
-let data = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  dbInstance = await open({
+    filename: path.resolve(__dirname, '../../../db/database.sqlite'),
+    driver: sqlite3.Database
+  });
 
-const saveData = () => {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-};
+  // Criação das tabelas com a nova estrutura escalável
+  await dbInstance.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      email TEXT UNIQUE,
+      password TEXT,
+      client_id INTEGER,
+      role TEXT DEFAULT 'user'
+    );
 
-export const query = async (text, params = []) => {
-  const start = Date.now();
-  let result = [];
+    CREATE TABLE IF NOT EXISTS integrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      external_account_id TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at TEXT,
+      metadata TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(client_id, provider, external_account_id)
+    );
 
-  // Mapeamento de queries simuladas (O "motor" do nosso banco JSON)
-  if (text.includes("SELECT * FROM users WHERE email = ?")) {
-    const [email] = params;
-    result = data.users.filter(u => u.email === email);
-  } 
-  else if (text.includes("SELECT id AS integration_id, client_id FROM integrations WHERE provider = ? AND meta_user_id = ?")) {
-    const [provider, metaUserId] = params;
-    const integration = data.integrations.find(i => i.provider === provider && i.meta_user_id === metaUserId);
-    if (integration) {
-      result = [{ integration_id: integration.id, client_id: integration.client_id }];
-    }
-  } 
-  else if (text.includes("SELECT * FROM integrations WHERE client_id = ? AND expires_at > ?")) {
-    const [clientId, expiresAtComparison] = params;
-    const validIntegrations = data.integrations
-      .filter(i => i.client_id === clientId && i.expires_at > expiresAtComparison)
-      .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
-      .slice(0, 1);
-    result = validIntegrations;
-  } 
-  else if (text.includes("SELECT * FROM integrations WHERE id = ?")) {
-    const [id] = params;
-    result = data.integrations.filter(i => i.id === id);
-  } 
-  else if (text.includes("SELECT * FROM users WHERE id = ?")) {
-    const [id] = params;
-    result = data.users.filter(u => u.id === id);
+    -- 👇 TABELA DE CONTAS DE ANÚNCIOS UNIVERSAL 👇
+    CREATE TABLE IF NOT EXISTS ad_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      integration_id INTEGER NOT NULL,     -- Liga esta conta à integração que lhe deu origem
+      provider TEXT NOT NULL,              -- ex: 'meta', 'google_ads', 'tiktok'
+      external_account_id TEXT NOT NULL,   -- ID da conta (Meta: 'act_123', Google: '123-456-7890')
+      name TEXT NOT NULL,
+      currency TEXT,
+      metadata TEXT,                       -- JSON para guardar configs específicas (ex: MCC do Google)
+      is_active BOOLEAN DEFAULT 1,         -- Se o utilizador desmarcar a conta no painel, passa a 0
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(client_id, provider, external_account_id) -- Evita duplicar a mesma conta do mesmo provider
+    );
+
+    -- 👇 TABELA DE DADOS BRUTOS (O ALICERCE DO BI) 👇
+    CREATE TABLE IF NOT EXISTS campaign_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      provider TEXT NOT NULL,        -- ex: 'meta' ou 'google_ads'
+      account_id TEXT NOT NULL,      -- ID da conta de anúncios
+      campaign_id TEXT NOT NULL,     -- ID da campanha
+      campaign_name TEXT,            -- Nome da campanha
+      date TEXT NOT NULL,            -- Data no formato YYYY-MM-DD
+      currency TEXT,                 -- Moeda (BRL, USD, EUR)
+      spend REAL DEFAULT 0,          -- Valor gasto
+      impressions INTEGER DEFAULT 0, -- Visualizações
+      clicks INTEGER DEFAULT 0,      -- Cliques no link
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      -- A restrição UNIQUE abaixo é o coração do nosso ETL. 
+      -- Garante que não teremos a mesma campanha duplicada no mesmo dia.
+      UNIQUE(client_id, provider, account_id, campaign_id, date)
+    );
+  `);
+
+  // Verifica se já existe algum usuário no banco e insere o admin se estiver vazio
+  const checkUser = await dbInstance.get(`SELECT COUNT(*) as count FROM users`);
+  if (checkUser.count === 0) {
+    await dbInstance.run(`
+      INSERT INTO users (name, email, password, client_id, role) 
+      VALUES ('João Vitor (Admin)', 'joao@marketingdata.com', 'admin123', 1, 'admin')
+    `);
+    console.log('👤 Usuário padrão (joao@marketingdata.com / admin123) criado com sucesso!');
   }
 
-  const duration = Date.now() - start;
-  console.log("📊 Query executada:", { text: text.substring(0, 50) + "...", rows: result.length, duration: `${duration}ms` });
-
-  // Retorno padrão simulando bibliotecas de SQL (como 'pg')
-  return { rows: result, rowCount: result.length };
+  console.log('📦 Banco de dados SQLite inicializado com estrutura multi-provedores!');
+  return dbInstance;
 };
 
-export const insertIntegration = (clientId, provider, metaUserId, accessToken, expiresAt) => {
-  const id = data.integrations.length > 0 ? Math.max(...data.integrations.map(i => i.id)) + 1 : 1;
-  const integration = {
-    id,
-    client_id: clientId,
-    provider,
-    meta_user_id: metaUserId,
-    access_token: accessToken,
-    expires_at: expiresAt,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
-  data.integrations.push(integration);
-  saveData();
-  return integration;
+// Wrapper genérico para executar Queries
+export const query = async (sqlText, params = []) => {
+  const db = await initDB();
+  const rows = await db.all(sqlText, params);
+  return { rows }; 
 };
 
-export const updateIntegration = (id, accessToken, expiresAt) => {
-  const integration = data.integrations.find(i => i.id === id);
-  if (integration) {
-    integration.access_token = accessToken;
-    integration.expires_at = expiresAt;
-    integration.updated_at = new Date().toISOString();
-    saveData();
-  }
+// Funções de inserção e atualização suportando os campos genéricos
+export const insertIntegration = async (clientId, provider, externalAccountId, accessToken, expiresAt, refreshToken = null, metadata = null) => {
+  const db = await initDB();
+  const metaString = metadata ? JSON.stringify(metadata) : null;
+  
+  const result = await db.run(
+    `INSERT INTO integrations (client_id, provider, external_account_id, access_token, refresh_token, expires_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [clientId, provider, externalAccountId, accessToken, refreshToken, expiresAt, metaString]
+  );
+  
+  return await db.get(`SELECT * FROM integrations WHERE id = ?`, [result.lastID]);
 };
 
-export const updateUser = (id, name) => {
-  const user = data.users.find(u => u.id === id);
-  if (user) {
-    user.name = name;
-    user.updated_at = new Date().toISOString();
-    saveData();
-  }
-};
+export const updateIntegration = async (id, accessToken, expiresAt, refreshToken = null) => {
+  const db = await initDB();
+  
+  // Atualiza os tokens da integração existente
+  const sql = refreshToken 
+    ? `UPDATE integrations SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    : `UPDATE integrations SET access_token = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+  
+  const params = refreshToken 
+    ? [accessToken, refreshToken, expiresAt, id]
+    : [accessToken, expiresAt, id];
 
-const connectDatabase = async () => {
-  try {
-    data = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-    console.log("✅ Conectado ao armazenamento JSON (Multi-Tenant)");
-  } catch (error) {
-    console.error("❌ Erro ao conectar ao armazenamento JSON:", error.message);
-    process.exit(1);
-  }
+  await db.run(sql, params);
 };
-
-export default connectDatabase;

@@ -1,60 +1,57 @@
 import dotenv from "dotenv";
-
-// Carregar variáveis de ambiente ANTES de qualquer altro import
-dotenv.config();
+dotenv.config(); // Carrega as variáveis de ambiente antes de tudo
 
 import app from "./app.js";
-import connectDatabase from "./core/config/database.js";
-import checkEnvVars from "./core/config/env.js";
+import checkEnvVars, { PORT } from "./core/config/env.js";
+import { initDB } from "./core/config/database.js";
 
-// Validar variáveis de ambiente
+// Valida as variáveis de ambiente
 checkEnvVars();
 
-// Conectar ao banco de dados
-connectDatabase().catch(err => {
-  console.error("❌ Falha ao conectar ao armazenamento:", err.message);
-  console.error("\n🔧 SOLUÇÕES:");
-  console.error("1. Verificar permissões:");
-  console.error("   - Certifique-se que a pasta db/ tem permissões de escrita");
-  console.error("");
-  console.error("2. Recriar arquivo de dados:");
-  console.error("   - Delete db/data.json e reinicie a aplicação");
-  process.exit(1);
-});
+const startServer = async () => {
+  try {
+    // 1. Aguarda a conexão e criação das tabelas no SQLite
+    await initDB();
 
-const BASE_PORT = parseInt(process.env.PORT, 10) || 3000;
-
-// Inicia servidor na porta configurada e falha em caso de porta ocupada
-const startServer = () => {
-  const server = app.listen(BASE_PORT, () => {
-    console.log(`✅ Servidor rodando na porta ${BASE_PORT}`);
-  });
-
-  server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') {
-      console.error(`❌ Erro: porta ${BASE_PORT} já está em uso.`);
-      console.error(`🔧 Solução: execute 'npm run kill-port' e inicie novamente com 'npm run dev'.`);
-      // Não tentar porta alternativa automaticamente para manter URL fixa
-      process.exit(1);
-    }
-    console.error(`❌ Erro ao iniciar servidor: ${error.message}`);
-    process.exit(1);
-  });
-
-  const handleGracefulShutdown = (signal) => {
-    console.log(`\n🛑 ${signal} recebido, desligando...`);
-    server.close(() => {
-      console.log('✅ Servidor encerrado');
-      process.exit(0);
+    // 2. Inicia o servidor Express
+    const server = app.listen(PORT, () => {
+      console.log(`✅ Servidor rodando na porta ${PORT}`);
     });
-    setTimeout(() => {
-      console.error('⚠️ Forçando encerramento...');
-      process.exit(1);
-    }, 10000);
-  };
 
-  process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+    // 3. Tratamento de erro de porta ocupada
+    server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        console.error(`❌ Erro: A porta ${PORT} já está em uso.`);
+        console.error(`🔧 Dica: Execute 'npm run kill-port' e tente novamente.`);
+      } else {
+        console.error(`❌ Erro ao iniciar servidor: ${error.message}`);
+      }
+      process.exit(1);
+    });
+
+    // 4. Desligamento gracioso (Graceful Shutdown)
+    const gracefulShutdown = (signal) => {
+      console.log(`\n🛑 Sinal ${signal} recebido. Encerrando servidor...`);
+      
+      server.close(() => {
+        console.log('✅ Servidor encerrado com segurança.');
+        process.exit(0);
+      });
+
+      // Força o encerramento se alguma requisição travar por mais de 10s
+      setTimeout(() => {
+        console.error('⚠️ Tempo limite excedido. Forçando encerramento...');
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  } catch (error) {
+    console.error("❌ Falha crítica ao inicializar a aplicação:", error.message);
+    process.exit(1);
+  }
 };
 
 startServer();

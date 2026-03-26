@@ -1,80 +1,74 @@
-import axios from "axios";
-import { successResponse, errorResponse } from "../../../core/utils/response.util.js";
-import {
-  exchangeCodeForToken,
-  exchangeForLongLivedToken,
-  getCurrentValidToken,
-  validateToken
-} from "../services/auth.service.js";
-import { upsertMetaIntegration } from "../repositories/metaAccount.repository.js";
-
-export const checkAuthStatus = async (req, res) => {
-  try {
-    const token = await getCurrentValidToken();
-
-    if (!token) {
-      // Devolvemos um JSON de sucesso (200), mas avisando que a autenticação é false
-      return successResponse(res, {
-        authenticated: false,
-        action: { url: "/api/meta/auth/login", method: "GET", description: "Iniciar fluxo de autenticação" }
-      }, "Nenhuma integração válida encontrada");
-    }
-
-    const userData = await validateToken(token);
-
-    if (!userData) {
-      return successResponse(res, {
-        authenticated: false,
-        action: { url: "/api/meta/auth/login", method: "GET", description: "Renovar autenticação" }
-      }, "Token expirado ou inválido");
-    }
-
-    return successResponse(res, { authenticated: true, user: userData }, "Usuário autenticado com Meta");
-
-  } catch (error) {
-    console.error('🔥 Erro ao verificar status de autenticação:', error.message);
-    return errorResponse(res, "Erro interno ao verificar autenticação", 500);
-  }
-};
+// src/modules/meta/controllers/auth.controller.js
+import axios from 'axios';
+import { upsertMetaIntegration, getValidIntegration } from '../repositories/metaAccount.repository.js'; // 👈 Adicionamos o getValidIntegration aqui
+import responseUtil from '../../../core/utils/response.util.js';
 
 export const handleMetaCallback = async (req, res) => {
-  try {
-    const { code } = req.query;
+  const { code, redirectUri } = req.body;
+  const clientId = req.clientId; 
 
-    if (!code) {
-      return errorResponse(res, "Parâmetro 'code' obrigatório na URL de callback", 400);
+  if (!code || !redirectUri) {
+    return responseUtil.error(res, 'Parâmetros code e redirectUri são obrigatórios', 400);
+  }
+
+  try {
+    const tokenResponse = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      params: {
+        client_id: process.env.META_APP_ID,
+        client_secret: process.env.META_APP_SECRET, 
+        redirect_uri: redirectUri,
+        code: code,
+      },
+    });
+
+    const accessToken = tokenResponse.data.access_token;
+    const expiresIn = tokenResponse.data.expires_in; 
+    let expiresAt = null;
+    if (expiresIn) {
+      expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
     }
 
-    const shortToken = await exchangeCodeForToken(code);
-    const longToken = await exchangeForLongLivedToken(shortToken.access_token);
-    const accessToken = longToken.access_token;
-
-    // Observação: O ideal na Etapa 5 será mover esta chamada do Axios para o auth.service.js
-    const { data: metaUser } = await axios.get("https://graph.facebook.com/me", {
-      params: { access_token: accessToken, fields: "id,name" },
+    const meResponse = await axios.get('https://graph.facebook.com/me', {
+      params: {
+        access_token: accessToken,
+        fields: 'id,name', 
+      },
     });
 
-    const expiresAt = new Date(Date.now() + longToken.expires_in * 1000);
+    const metaUserId = meResponse.data.id;
+    const metaUserName = meResponse.data.name; 
 
-    const user = await upsertMetaIntegration({
-      metaUserId: metaUser.id,
-      name: metaUser.name,
+    const integration = await upsertMetaIntegration({
+      metaUserId,
+      name: metaUserName,
       accessToken,
       expiresAt,
+      clientId, 
     });
 
-    return successResponse(res, user, "Meta conectado com sucesso 🚀");
+    return responseUtil.success(res, integration, 'Integração com a Meta realizada com sucesso!');
   } catch (error) {
-    const statusCode = error.response?.status || 500;
-    const errorMessage = error.response?.data?.error_description || error.message || "Erro desconhecido na autenticação Meta";
-    
-    console.error(`🔥 [Auth Error]:`, errorMessage);
-    return errorResponse(res, errorMessage, statusCode);
+    console.error('Erro na integração Meta:', error.response?.data || error.message);
+    const errorMessage = error.response?.data?.error?.message || 'Falha ao validar a autorização com o Facebook.';
+    return responseUtil.error(res, errorMessage, 500);
   }
 };
 
-export const redirectToMetaLogin = (req, res) => {
-  // Redirecionamentos (302) não retornam JSON, logo, mantemos a função nativa do Express
-  const authUrl = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.META_APP_ID}&redirect_uri=${encodeURIComponent(process.env.META_REDIRECT_URI)}&scope=read_insights,pages_show_list,pages_manage_ads`;
-  res.redirect(authUrl);
+// 👇 NOVA FUNÇÃO AQUI 👇
+export const getMetaStatus = async (req, res) => {
+  try {
+    const clientId = req.clientId;
+    
+    // Vai no SQLite procurar se esse cliente tem uma integração da Meta válida
+    const integration = await getValidIntegration(clientId);
+
+    if (integration) {
+      return responseUtil.success(res, { isConnected: true }, 'Meta já conectada.');
+    }
+
+    return responseUtil.success(res, { isConnected: false }, 'Meta não conectada.');
+  } catch (error) {
+    console.error('Erro ao buscar status da Meta:', error.message);
+    return responseUtil.error(res, 'Erro ao buscar status da integração', 500);
+  }
 };
